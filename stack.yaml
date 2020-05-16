@@ -1,4 +1,5 @@
 resolver: lts-15.12
 packages:
 - .
-# extra-deps:
+extra-deps:
+- vulkan-api-1.3.0.0@sha256:9f905a1656c35cf15786a1f2669ab83b8f4633ca35b2affcbb05012958ab12ce,19705

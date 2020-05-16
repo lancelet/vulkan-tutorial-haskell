@@ -32,8 +32,9 @@ library
   import:          base, ghc-options
   hs-source-dirs:  src
   build-depends:
-    , massiv
-    , vector
+    , linear
+    , sdl2
+    , vulkan-api
 
   exposed-modules: VkTut.Main
 
