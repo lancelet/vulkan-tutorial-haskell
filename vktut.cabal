@@ -1,0 +1,46 @@
+cabal-version:      2.4
+name:               vktut
+version:            0.1.0.0
+synopsis:           Vulkan Tutorial in Haskell
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Jonathan Merritt
+maintainer:         j.s.merritt@gmail.com
+copyright:          Copyright (C) 2020 Jonathan Merritt
+category:           Graphics
+build-type:         Simple
+extra-source-files: CHANGELOG.md
+tested-with:        GHC ==8.8.3
+description:
+  Please see the README for the package at its homepage:
+  https://github.com/lancelet/vulkan-tutorial-haskell
+
+source-repository head
+  type:     git
+  location: git://github.com/lancelet/vulkan-tutorial-haskell.git
+
+common base
+  default-language: Haskell2010
+  build-depends:    base ^>=4.13.0.0
+
+common ghc-options
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-record-updates
+    -Wincomplete-uni-patterns -Wredundant-constraints
+
+library
+  import:          base, ghc-options
+  hs-source-dirs:  src
+  build-depends:
+    , massiv
+    , vector
+
+  exposed-modules:
+    VkTut.Main
+
+executable vktut
+  import:         base, ghc-options
+  hs-source-dirs: app
+  main-is:        Main.hs
+  build-depends:
+    , vktut
