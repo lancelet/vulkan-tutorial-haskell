@@ -35,12 +35,10 @@ library
     , massiv
     , vector
 
-  exposed-modules:
-    VkTut.Main
+  exposed-modules: VkTut.Main
 
 executable vktut
   import:         base, ghc-options
   hs-source-dirs: app
   main-is:        Main.hs
-  build-depends:
-    , vktut
+  build-depends:  vktut
