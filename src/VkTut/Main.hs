@@ -25,7 +25,7 @@ import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as V
 import Data.Word (Word32, Word64)
-import Foreign (Ptr, castPtr, freeHaskellFunPtr)
+import Foreign (castPtr)
 import Foreign.C (CString, peekCString)
 import qualified SDL
 import qualified SDL.Video.Vulkan as SDL
@@ -67,7 +67,7 @@ mainLoop draw = whileM $ do
 withInstance ::
   SDL.Window ->
   Text ->
-  Managed (Vk.Instance)
+  Managed Vk.Instance
 withInstance window appName = do
   -- list the available extensions
   availExtNames <-
