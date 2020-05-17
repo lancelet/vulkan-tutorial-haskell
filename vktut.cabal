@@ -31,10 +31,8 @@ common ghc-options
 library
   import:          base, ghc-options
   hs-source-dirs:  src
-  c-sources:
-    cbits/debug-callback.c
-  include-dirs:
-      /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/include
+  c-sources:       cbits/debug-callback.c
+  include-dirs:    /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/include
   build-depends:
     , bytestring
     , extra
