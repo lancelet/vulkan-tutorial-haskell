@@ -1,32 +1,46 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module VkTut.Main
   ( main,
   )
 where
 
-import Control.Monad (forM_)
-import Control.Monad.IO.Class (liftIO)
 import Control.Exception.Safe (bracket, bracket_)
 import Control.Monad.Extra (whileM)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Managed (Managed, managed, managed_, runManaged)
 import Data.Bits ((.|.))
+import qualified Data.ByteString as BS
+import Data.ByteString (ByteString)
+import qualified Data.Text as Text
+import Data.Text (Text)
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
+import qualified Data.Vector as V
 import Foreign (Ptr, freeHaskellFunPtr)
+import Foreign.C (CString, peekCString)
 import qualified SDL
 import qualified SDL.Video.Vulkan as SDL
 import qualified Vulkan as Vk
+import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
+
+windowWidth, windowHeight :: Int
+windowWidth = 800
+windowHeight = 600
 
 main :: IO ()
 main = do
   putStrLn "Hello Word"
   runManaged $ do
     withSDL
-    vkInstance <- withInstance
-    withDebugUtils vkInstance debugCallback
+    window <- withWindow "Vulkan" windowWidth windowHeight
+    vkInstance <- withInstance window "Hello Triangle"
+    withDebugUtils vkInstance
+    liftIO $ mainLoop (pure ())
 
 mainLoop :: IO () -> IO ()
 mainLoop draw = whileM $ do
@@ -38,84 +52,70 @@ mainLoop draw = whileM $ do
 ---- Instance -----------------------------------------------------------------
 
 withInstance ::
+  SDL.Window ->
+  Text ->
   Managed (Vk.Instance)
-withInstance = do
+withInstance window appName = do
   -- list the available extensions
-  availableExtensionNames <- fmap Vk.extensionName . snd <$>
-    Vk.enumerateInstanceExtensionProperties Nothing
+  availExtNames <-
+    fmap Vk.extensionName . snd
+      <$> Vk.enumerateInstanceExtensionProperties Nothing
   liftIO $ Text.putStrLn "Available extensions:"
-  forM_ availableExtensionNames $ \namebs ->
-    liftIO $ Text.putStrLn $ "  " <> Text.decodeUtf8 namebs
+  liftIO $ mapM_ (\n -> Text.putStrLn $ "  " <> Text.decodeUtf8 n) availExtNames
   -- list the available layers
-  availableLayerNames <- fmap Vk.layerName . snd <$>
-    Vk.enumerateInstanceLayerProperties
+  availLyrNames <-
+    fmap Vk.layerName . snd
+      <$> Vk.enumerateInstanceLayerProperties
   liftIO $ Text.putStrLn "Available layers:"
-  forM_ availableLayerNames $ \namebs ->
-    liftIO $ Text.putStrLn $ "  " <> Text.decodeUtf8 namebs
-  let
-    createInfo :: Vk.InstanceCreateInfo '[Vk.DebugUtilsMessengerCreateInfoEXT] 
-    createInfo = undefined
-    --
-    acquire :: IO (Vk.Instance)
-    acquire = Vk.createInstance createInfo Nothing
-    --
-    release :: Vk.Instance -> IO ()
-    release vkInstance = Vk.destroyInstance vkInstance Nothing
+  liftIO $ mapM_ (\n -> Text.putStrLn $ "  " <> Text.decodeUtf8 n) availLyrNames
+  -- list the required SDL extensions
+  windowExtensions :: [CString] <- SDL.vkGetInstanceExtensions window
+  liftIO $ Text.putStrLn "Required SDL window extensions:"
+  liftIO $
+    mapM_
+      ( \cstr -> do
+          txt <- Text.pack <$> peekCString cstr
+          Text.putStrLn $ "  " <> txt
+      )
+      windowExtensions
+  windowExtensionsBS :: [ByteString] <-
+    liftIO $
+      traverse BS.packCString windowExtensions
+  --
+  let requiredLayers = V.fromList ["VK_LAYER_KHRONOS_validation"]
+      requiredExtensions =
+        V.fromList $
+          Vk.EXT_DEBUG_UTILS_EXTENSION_NAME : windowExtensionsBS
+  --
+  let createInfo :: Vk.InstanceCreateInfo '[Vk.DebugUtilsMessengerCreateInfoEXT]
+      createInfo =
+        Vk.zero
+          { Vk.applicationInfo =
+              Just
+                Vk.zero
+                  { Vk.applicationName = Just (Text.encodeUtf8 appName),
+                    Vk.apiVersion = Vk.API_VERSION_1_1
+                  },
+            Vk.enabledLayerNames = requiredLayers,
+            Vk.enabledExtensionNames = requiredExtensions
+          }
+          ::& debugUtilsMessengerCreateInfo
+          :& ()
+      --
+      acquire :: IO (Vk.Instance)
+      acquire = Vk.createInstance createInfo Nothing
+      --
+      release :: Vk.Instance -> IO ()
+      release vkInstance = Vk.destroyInstance vkInstance Nothing
   managed (bracket acquire release)
-  
+
 ---- Debugging Messages -------------------------------------------------------
 
--- | Setup debug utils.
-withDebugUtils ::
-  -- | Vulkan instance.
-  Vk.Instance ->
-  -- | Haskell-based debug callback.
-  Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
-  -- | Managed action with debug utils setup.
-  Managed ()
-withDebugUtils vkInstance hsCallback = do
-  callbackPtr <- withDebugCallback hsCallback
-  let createInfo = debugUtilsMessengerCreateInfo callbackPtr
-  let
-    acquire :: IO Vk.DebugUtilsMessengerEXT
-    acquire = Vk.createDebugUtilsMessengerEXT vkInstance createInfo Nothing
-    --
-    release :: Vk.DebugUtilsMessengerEXT -> IO ()
-    release u = Vk.destroyDebugUtilsMessengerEXT vkInstance u Nothing
-  managed (bracket acquire release) >> pure ()
+foreign import ccall unsafe "debug-callback.c &debugCallback"
+  debugCallbackPtr :: Vk.PFN_vkDebugUtilsMessengerCallbackEXT
 
-foreign import ccall "wrapper"
-  mkDebugCallback ::
-    Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
-    IO Vk.PFN_vkDebugUtilsMessengerCallbackEXT
-
-withDebugCallback ::
-  Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
-  Managed Vk.PFN_vkDebugUtilsMessengerCallbackEXT
-withDebugCallback hsCallback =
-  let acquire :: IO Vk.PFN_vkDebugUtilsMessengerCallbackEXT
-      acquire = mkDebugCallback hsCallback
-      --
-      release :: Vk.PFN_vkDebugUtilsMessengerCallbackEXT -> IO ()
-      release = freeHaskellFunPtr
-   in managed (bracket acquire release)
-
-debugCallback ::
-  Vk.DebugUtilsMessageSeverityFlagBitsEXT ->
-  Vk.DebugUtilsMessageTypeFlagsEXT ->
-  Ptr Vk.DebugUtilsMessengerCallbackDataEXT ->
-  Ptr () ->
-  IO Vk.Bool32
-debugCallback _severity _messageType pCallbackData _pUserData = do
-  callbackData <- Vk.peekCStruct pCallbackData
-  let message = Text.decodeUtf8 $ Vk.message callbackData
-  Text.putStrLn $ "validation layer: " <> message
-  pure Vk.FALSE
-
-debugUtilsMessengerCreateInfo ::
-  Vk.PFN_vkDebugUtilsMessengerCallbackEXT ->
-  Vk.DebugUtilsMessengerCreateInfoEXT
-debugUtilsMessengerCreateInfo pCallback =
+debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
+debugUtilsMessengerCreateInfo =
   Vk.zero
     { Vk.messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
@@ -125,8 +125,23 @@ debugUtilsMessengerCreateInfo pCallback =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-      Vk.pfnUserCallback = pCallback
+      Vk.pfnUserCallback = debugCallbackPtr
     }
+
+withDebugUtils ::
+  Vk.Instance ->
+  Managed ()
+withDebugUtils vkInstance = do
+  let
+    createInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
+    createInfo = debugUtilsMessengerCreateInfo
+    --
+    acquire :: IO Vk.DebugUtilsMessengerEXT
+    acquire = Vk.createDebugUtilsMessengerEXT vkInstance createInfo Nothing
+    --
+    release :: Vk.DebugUtilsMessengerEXT -> IO ()
+    release u = Vk.destroyDebugUtilsMessengerEXT vkInstance u Nothing
+  managed (bracket acquire release) >> pure ()
 
 ---- SDL ----------------------------------------------------------------------
 
@@ -139,6 +154,25 @@ withSDL =
       sdlVkBracket :: forall r. IO r -> IO r
       sdlVkBracket = bracket_ (SDL.vkLoadLibrary Nothing) SDL.vkUnloadLibrary
    in managed_ (sdlBracket . sdlVkBracket)
+
+withWindow :: Text -> Int -> Int -> Managed SDL.Window
+withWindow title width height =
+  let acquire :: IO SDL.Window
+      acquire =
+        SDL.createWindow
+          title
+          ( SDL.defaultWindow
+              { SDL.windowInitialSize =
+                  SDL.V2
+                    (fromIntegral width)
+                    (fromIntegral height),
+                SDL.windowGraphicsContext = SDL.VulkanContext
+              }
+          )
+      --
+      release :: SDL.Window -> IO ()
+      release = SDL.destroyWindow
+   in managed (bracket acquire release)
 
 -- | Check if an SDL event is a quit event.
 isSDLQuitEvent :: SDL.Event -> Bool

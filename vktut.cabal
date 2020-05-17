@@ -31,19 +31,26 @@ common ghc-options
 library
   import:          base, ghc-options
   hs-source-dirs:  src
+  c-sources:
+    cbits/debug-callback.c
+  include-dirs:
+      /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/include
   build-depends:
+    , bytestring
     , extra
     , linear
     , managed
     , safe-exceptions
     , sdl2
     , text
+    , vector
     , vulkan           ^>=3.3
 
   exposed-modules: VkTut.Main
 
 executable vktut
   import:         base, ghc-options
+  ghc-options:    -threaded
   hs-source-dirs: app
   main-is:        Main.hs
   build-depends:  vktut
