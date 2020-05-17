@@ -38,7 +38,7 @@ windowHeight = 600
 
 main :: IO ()
 main = do
-  putStrLn "Hello Word"
+  putStrLn "Hello World"
   runManaged $ do
     withSDL
     window <- withWindow "Vulkan" windowWidth windowHeight
@@ -122,15 +122,15 @@ withInstance window appName = do
       release vkInstance = Vk.destroyInstance vkInstance Nothing
   managed (bracket acquire release)
 
-data DeviceScore
-  = DeviceScore
-      { devicePhysicalDevice :: Vk.PhysicalDevice,
-        deviceScoreGraphicsQueue :: Word32,
-        deviceScorePresentQueue :: Word32,
-        deviceScoreFormat :: Vk.SurfaceFormatKHR,
-        deviceScorePresentMode :: Vk.PresentModeKHR,
-        deviceScoreSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
-        deviceScoreMemory :: Word64
+data DeviceInfo
+  = DeviceInfo
+      { deviceInfoPhysicalDevice :: Vk.PhysicalDevice,
+        deviceInfoGraphicsQueue :: Word32,
+        deviceInfotPresentQueue :: Word32,
+        deviceInfoFormat :: Vk.SurfaceFormatKHR,
+        deviceInfoPresentMode :: Vk.PresentModeKHR,
+        deviceInfoSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
+        deviceInfoMemory :: Word64
       }
   deriving (Show)
 
@@ -139,7 +139,7 @@ pickPhysicalDevice ::
   Vk.Instance ->
   Vk.SurfaceKHR ->
   Vk.SurfaceFormatKHR ->
-  m DeviceScore
+  m DeviceInfo
 pickPhysicalDevice vkInstance surface desiredFormat = do
   -- list the names of physical devices
   (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
@@ -151,13 +151,13 @@ pickPhysicalDevice vkInstance surface desiredFormat = do
   liftIO $ mapM_ (\n -> Text.putStrLn $ "  " <> n) names
   -- pick the physical device with the best score
   scores <- traverse (deviceOverallScore surface desiredFormat) devices
-  let allowedDeviceScores :: V.Vector DeviceScore
+  let allowedDeviceScores :: V.Vector DeviceInfo
       allowedDeviceScores = V.mapMaybe id scores
-  let best = V.maximumBy (comparing deviceScoreMemory) allowedDeviceScores
+  let best = V.maximumBy (comparing deviceInfoMemory) allowedDeviceScores
   name <-
     fmap (Text.decodeUtf8 . Vk.deviceName)
       $ Vk.getPhysicalDeviceProperties
-      $ devicePhysicalDevice best
+      $ deviceInfoPhysicalDevice best
   liftIO $ Text.putStrLn $ "Chose device: " <> name
   pure best
 
@@ -166,7 +166,7 @@ deviceOverallScore ::
   Vk.SurfaceKHR ->
   Vk.SurfaceFormatKHR ->
   Vk.PhysicalDevice ->
-  m (Maybe DeviceScore)
+  m (Maybe DeviceInfo)
 deviceOverallScore surface desiredFormat device = do
   hasSwapChain <- deviceHasSwapChain device
   graphicsQueueVec <- getGraphicsQueueIndices device
@@ -186,7 +186,7 @@ deviceOverallScore surface desiredFormat device = do
   if deviceOk
     then
       pure $ Just $
-        DeviceScore
+        DeviceInfo
           device
           (V.head graphicsQueueVec)
           (V.head presentQueueVec)
