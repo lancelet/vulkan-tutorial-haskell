@@ -17,6 +17,7 @@ import Control.Monad.Managed (Managed, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.), Bits, zeroBits)
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
+import Data.List (nub)
 import Data.Maybe (isJust)
 import Data.Ord (comparing)
 import qualified Data.Text as Text
@@ -31,6 +32,7 @@ import qualified SDL
 import qualified SDL.Video.Vulkan as SDL
 import qualified Vulkan as Vk
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
+import qualified Vulkan.CStruct.Extends as Vk
 
 windowWidth, windowHeight :: Int
 windowWidth = 800
@@ -45,7 +47,7 @@ main = do
     vkInstance <- withInstance window "Hello Triangle"
     withDebugUtils vkInstance
     surface <- withSDLWindowSurface vkInstance window
-    physicalDevice <-
+    physicalDeviceInfo <-
       pickPhysicalDevice
         vkInstance
         surface
@@ -53,6 +55,7 @@ main = do
             Vk.FORMAT_B8G8R8_UNORM
             Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
         )
+    logicalDevice <- createLogicalDevice vkInstance physicalDeviceInfo
     liftIO $ mainLoop (pure ())
 
 mainLoop :: IO () -> IO ()
@@ -122,11 +125,59 @@ withInstance window appName = do
       release vkInstance = Vk.destroyInstance vkInstance Nothing
   managed (bracket acquire release)
 
+data LogicalDeviceInfo
+  = LogicalDeviceInfo
+      { ldiDevice :: Vk.Device,
+        ldiGraphicsQueue :: Vk.Queue,
+        ldiPresentQueue :: Vk.Queue
+      }
+
+createLogicalDevice ::
+  Vk.Instance ->
+  DeviceInfo ->
+  Managed LogicalDeviceInfo
+createLogicalDevice vkInstance devInfo = do
+  device <- withDevice devInfo
+  graphicsQueue <- Vk.getDeviceQueue device (deviceInfoGraphicsQueue devInfo) 0
+  presentQueue <- Vk.getDeviceQueue device (deviceInfoPresentQueue devInfo) 0
+  pure $ LogicalDeviceInfo device graphicsQueue presentQueue
+
+withDevice :: DeviceInfo -> Managed Vk.Device
+withDevice devInfo = do
+  let deviceCreateInfo :: Vk.DeviceCreateInfo '[]
+      deviceCreateInfo =
+        Vk.zero
+          { Vk.queueCreateInfos =
+              V.fromList
+                [ Vk.SomeStruct $
+                    Vk.zero
+                      { Vk.queueFamilyIndex = i,
+                        Vk.queuePriorities = V.singleton 1.0
+                      }
+                  | i <-
+                      nub
+                        [ deviceInfoGraphicsQueue devInfo,
+                          deviceInfoPresentQueue devInfo
+                        ]
+                ],
+            Vk.enabledExtensionNames =
+              V.fromList [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
+          }
+  let acquire :: IO Vk.Device
+      acquire = Vk.createDevice
+                (deviceInfoPhysicalDevice devInfo)
+                deviceCreateInfo
+                Nothing
+      --
+      release :: Vk.Device -> IO ()
+      release device = Vk.destroyDevice device Nothing
+  managed (bracket acquire release)
+
 data DeviceInfo
   = DeviceInfo
       { deviceInfoPhysicalDevice :: Vk.PhysicalDevice,
         deviceInfoGraphicsQueue :: Word32,
-        deviceInfotPresentQueue :: Word32,
+        deviceInfoPresentQueue :: Word32,
         deviceInfoFormat :: Vk.SurfaceFormatKHR,
         deviceInfoPresentMode :: Vk.PresentModeKHR,
         deviceInfoSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
