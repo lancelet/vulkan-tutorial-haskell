@@ -1,180 +1,160 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 
 module VkTut.Main
   ( main,
   )
 where
 
-import Control.Exception (Exception, throw)
-import Control.Monad (unless)
+import Control.Monad (forM_)
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception.Safe (bracket, bracket_)
+import Control.Monad.Extra (whileM)
+import Control.Monad.Managed (Managed, managed, managed_, runManaged)
 import Data.Bits ((.|.))
-import Foreign (FunPtr, Ptr)
-import qualified Foreign
-import Foreign.C.String (peekCString, withCString)
-import qualified Graphics.Vulkan as Vk
-import qualified Graphics.Vulkan.Ext.VK_EXT_debug_utils as Vk
-import Linear (V4 (V4))
+import qualified Data.Text.Encoding as Text
+import qualified Data.Text.IO as Text
+import Foreign (Ptr, freeHaskellFunPtr)
 import qualified SDL
-import SDL (($=))
 import qualified SDL.Video.Vulkan as SDL
+import qualified Vulkan as Vk
 
 main :: IO ()
 main = do
   putStrLn "Hello Word"
-  --
-  SDL.initializeAll
-  SDL.vkLoadLibrary Nothing
-  SDL.vkGetVkGetInstanceProcAddr
-  --
-  --
-  window <- SDL.createWindow "Vulkan" SDL.defaultWindow
-  renderer <- SDL.createRenderer window (-1) SDL.defaultRenderer
-  appLoop renderer
+  runManaged $ do
+    withSDL
+    vkInstance <- withInstance
+    withDebugUtils vkInstance debugCallback
 
-appLoop :: SDL.Renderer -> IO ()
-appLoop renderer = do
-  events <- SDL.pollEvents
-  let qPressed = any eventIsQPress events
-  SDL.rendererDrawColor renderer $= V4 0 0 255 255
-  SDL.clear renderer
-  SDL.present renderer
-  unless qPressed (appLoop renderer)
+mainLoop :: IO () -> IO ()
+mainLoop draw = whileM $ do
+  quit <- maybe False isSDLQuitEvent <$> SDL.pollEvent
+  if quit
+    then pure False
+    else draw >> pure True
 
--- | Check if an SDL event was the 'Q' key being pressed.
-eventIsQPress :: SDL.Event -> Bool
-eventIsQPress event =
-  case SDL.eventPayload event of
-    SDL.KeyboardEvent keyboardEvent ->
-      SDL.keyboardEventKeyMotion keyboardEvent == SDL.Pressed
-        && SDL.keysymKeycode
-          (SDL.keyboardEventKeysym keyboardEvent)
-          == SDL.KeycodeQ
-    _ -> False
+---- Instance -----------------------------------------------------------------
 
----- INSTANCE -----------------------------------------------------------------
+withInstance ::
+  Managed (Vk.Instance)
+withInstance = do
+  -- list the available extensions
+  availableExtensionNames <- fmap Vk.extensionName . snd <$>
+    Vk.enumerateInstanceExtensionProperties Nothing
+  liftIO $ Text.putStrLn "Available extensions:"
+  forM_ availableExtensionNames $ \namebs ->
+    liftIO $ Text.putStrLn $ "  " <> Text.decodeUtf8 namebs
+  -- list the available layers
+  availableLayerNames <- fmap Vk.layerName . snd <$>
+    Vk.enumerateInstanceLayerProperties
+  liftIO $ Text.putStrLn "Available layers:"
+  forM_ availableLayerNames $ \namebs ->
+    liftIO $ Text.putStrLn $ "  " <> Text.decodeUtf8 namebs
+  let
+    createInfo :: Vk.InstanceCreateInfo '[Vk.DebugUtilsMessengerCreateInfoEXT] 
+    createInfo = undefined
+    --
+    acquire :: IO (Vk.Instance)
+    acquire = Vk.createInstance createInfo Nothing
+    --
+    release :: Vk.Instance -> IO ()
+    release vkInstance = Vk.destroyInstance vkInstance Nothing
+  managed (bracket acquire release)
+  
+---- Debugging Messages -------------------------------------------------------
 
-withVulkanInstance :: (Vk.VkInstance -> IO Vk.VkResult) -> IO Vk.VkResult
-withVulkanInstance action =
-  withCString "Hello Triangle" $ \progNamePtr ->
-    withCString "No Engine" $ \engineNamePtr -> do
+-- | Setup debug utils.
+withDebugUtils ::
+  -- | Vulkan instance.
+  Vk.Instance ->
+  -- | Haskell-based debug callback.
+  Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
+  -- | Managed action with debug utils setup.
+  Managed ()
+withDebugUtils vkInstance hsCallback = do
+  callbackPtr <- withDebugCallback hsCallback
+  let createInfo = debugUtilsMessengerCreateInfo callbackPtr
+  let
+    acquire :: IO Vk.DebugUtilsMessengerEXT
+    acquire = Vk.createDebugUtilsMessengerEXT vkInstance createInfo Nothing
+    --
+    release :: Vk.DebugUtilsMessengerEXT -> IO ()
+    release u = Vk.destroyDebugUtilsMessengerEXT vkInstance u Nothing
+  managed (bracket acquire release) >> pure ()
+
+foreign import ccall "wrapper"
+  mkDebugCallback ::
+    Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
+    IO Vk.PFN_vkDebugUtilsMessengerCallbackEXT
+
+withDebugCallback ::
+  Vk.FN_vkDebugUtilsMessengerCallbackEXT ->
+  Managed Vk.PFN_vkDebugUtilsMessengerCallbackEXT
+withDebugCallback hsCallback =
+  let acquire :: IO Vk.PFN_vkDebugUtilsMessengerCallbackEXT
+      acquire = mkDebugCallback hsCallback
       --
-      debugCreate :: Vk.VkDebugUtilsMessengerCreateInfoEXT <-
-        Vk.newVkData populateDebugMessengerCreateInfo
-      --
-      appInfo :: Vk.VkApplicationInfo <- Vk.newVkData $ \ptr -> do
-        Vk.writeField @"sType" ptr Vk.VK_STRUCTURE_TYPE_APPLICATION_INFO
-        Vk.writeField @"pNext" ptr (Foreign.castPtr $ Vk.unsafePtr debugCreate)
-        Vk.writeField @"pApplicationName" ptr progNamePtr
-        Vk.writeField @"applicationVersion" ptr (Vk._VK_MAKE_VERSION 1 0 0)
-        Vk.writeField @"pEngineName" ptr engineNamePtr
-        Vk.writeField @"engineVersion" ptr (Vk._VK_MAKE_VERSION 1 0 0)
-        Vk.writeField @"apiVersion" ptr (Vk._VK_MAKE_VERSION 1 2 0)
-      pure undefined
+      release :: Vk.PFN_vkDebugUtilsMessengerCallbackEXT -> IO ()
+      release = freeHaskellFunPtr
+   in managed (bracket acquire release)
 
----- DEBUG CALLBACK -----------------------------------------------------------
-
-data DebugMessengerException
-  = DebugMessengerException Vk.VkResult
-  deriving (Show)
-
-instance Exception DebugMessengerException
-
-setupDebugMessenger ::
-  Vk.VkInstance ->
-  Vk.HS_vkCreateDebugUtilsMessengerEXT ->
-  IO Vk.VkDebugUtilsMessengerEXT
-setupDebugMessenger vkInstance createDebugUtilsMessengerEXT =
-  Foreign.alloca $ \(debugUtilsMessengerExt :: Ptr Vk.VkDebugUtilsMessengerEXT) -> do
-    Vk.newVkData $ \createInfo -> do
-      populateDebugMessengerCreateInfo createInfo
-      vkResult <-
-        createDebugUtilsMessengerEXT
-          vkInstance
-          createInfo
-          Vk.VK_NULL_HANDLE
-          debugUtilsMessengerExt
-      if vkResult == Vk.VK_SUCCESS
-        then pure ()
-        else throw $ DebugMessengerException vkResult
-      pure ()
-    Foreign.peek debugUtilsMessengerExt
-
-lookupCreateDebugUtilsMessengerEXT ::
-  Vk.VkInstance ->
-  SDL.VkGetInstanceProcAddrFunc ->
-  IO Vk.HS_vkCreateDebugUtilsMessengerEXT
-lookupCreateDebugUtilsMessengerEXT vkInstance gipar = do
-  let vkInstance' :: SDL.VkInstance = Foreign.castPtr vkInstance
-  fp :: FunPtr Vk.HS_vkCreateDebugUtilsMessengerEXT <-
-    Foreign.castFunPtr
-      <$> gipar vkInstance' Vk.VkCreateDebugUtilsMessengerEXT
-  pure $ unwrapCreateDebugUtilsMessengerEXT fp
-
-foreign import ccall "dynamic"
-  unwrapCreateDebugUtilsMessengerEXT ::
-    Vk.PFN_vkCreateDebugUtilsMessengerEXT ->
-    Vk.HS_vkCreateDebugUtilsMessengerEXT
-
--- | Create VkDebugUtilsMessangerCreateInfoEXT that points to our debug
---   message function.
-populateDebugMessengerCreateInfo ::
-  Ptr Vk.VkDebugUtilsMessengerCreateInfoEXT ->
-  IO ()
-populateDebugMessengerCreateInfo p = do
-  callbackPtr <- Vk.newVkDebugUtilsMessengerCallbackEXT debugCallback
-  Vk.clearStorable p
-  Vk.writeField
-    @"sType"
-    p
-    Vk.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
-  Vk.writeField
-    @"messageSeverity"
-    p
-    ( Vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-        .|. Vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-        .|. Vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
-    )
-  Vk.writeField
-    @"messageType"
-    p
-    ( Vk.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-        .|. Vk.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-        .|. Vk.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT
-    )
-  Vk.writeField
-    @"pfnUserCallback"
-    p
-    callbackPtr
-
--- do at the end:
--- Foreign.freeHaskellFunPtr callbackPtr
-
--- | The debug callback function.
 debugCallback ::
-  Vk.VkDebugUtilsMessageSeverityFlagBitsEXT ->
-  Vk.VkDebugUtilsMessageTypeFlagsEXT ->
-  Ptr Vk.VkDebugUtilsMessengerCallbackDataEXT ->
-  Ptr Vk.Void ->
-  IO Vk.VkBool32
-debugCallback severity msgType pCallbackData _pUserData = do
-  message <- readStringFieldPtr @"pMessage" pCallbackData
-  putStrLn $ "validation layer: " <> message <> "\n"
-  pure Vk.VK_FALSE
+  Vk.DebugUtilsMessageSeverityFlagBitsEXT ->
+  Vk.DebugUtilsMessageTypeFlagsEXT ->
+  Ptr Vk.DebugUtilsMessengerCallbackDataEXT ->
+  Ptr () ->
+  IO Vk.Bool32
+debugCallback _severity _messageType pCallbackData _pUserData = do
+  callbackData <- Vk.peekCStruct pCallbackData
+  let message = Text.decodeUtf8 $ Vk.message callbackData
+  Text.putStrLn $ "validation layer: " <> message
+  pure Vk.FALSE
 
--- | Read a string field from a structure that contains a (char*).
-readStringFieldPtr ::
-  forall fname a.
-  ( Vk.CanReadFieldArray fname a,
-    Vk.FieldType fname a ~ Ptr Vk.CChar
-  ) =>
-  -- | Structure from which to extract field 'fname'
-  Ptr a ->
-  -- | IO action which extracts the field.
-  IO String
-readStringFieldPtr px = Vk.readField @fname px >>= peekCString
+debugUtilsMessengerCreateInfo ::
+  Vk.PFN_vkDebugUtilsMessengerCallbackEXT ->
+  Vk.DebugUtilsMessengerCreateInfoEXT
+debugUtilsMessengerCreateInfo pCallback =
+  Vk.zero
+    { Vk.messageSeverity =
+        Vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+      Vk.messageType =
+        Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+      Vk.pfnUserCallback = pCallback
+    }
+
+---- SDL ----------------------------------------------------------------------
+
+withSDL :: Managed ()
+withSDL =
+  let -- bracket acquire and release of SDL itself
+      sdlBracket :: forall r. IO r -> IO r
+      sdlBracket = bracket_ SDL.initializeAll SDL.quit
+      -- bracket acquire and release of SDL Vulkan library
+      sdlVkBracket :: forall r. IO r -> IO r
+      sdlVkBracket = bracket_ (SDL.vkLoadLibrary Nothing) SDL.vkUnloadLibrary
+   in managed_ (sdlBracket . sdlVkBracket)
+
+-- | Check if an SDL event is a quit event.
+isSDLQuitEvent :: SDL.Event -> Bool
+isSDLQuitEvent event =
+  case event of
+    SDL.Event _ SDL.QuitEvent -> True
+    SDL.Event
+      _
+      ( SDL.KeyboardEvent
+          ( SDL.KeyboardEventData
+              _
+              SDL.Released
+              False
+              (SDL.Keysym _ code _)
+            )
+        )
+        | code == SDL.KeycodeQ || code == SDL.KeycodeEscape ->
+          True
+    _ -> False

@@ -32,9 +32,13 @@ library
   import:          base, ghc-options
   hs-source-dirs:  src
   build-depends:
+    , extra
     , linear
+    , managed
+    , safe-exceptions
     , sdl2
-    , vulkan-api
+    , text
+    , vulkan           ^>=3.3
 
   exposed-modules: VkTut.Main
 

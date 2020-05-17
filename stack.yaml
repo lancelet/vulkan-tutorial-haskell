@@ -2,4 +2,6 @@ resolver: lts-15.12
 packages:
 - .
 extra-deps:
-- vulkan-api-1.3.0.0@sha256:9f905a1656c35cf15786a1f2669ab83b8f4633ca35b2affcbb05012958ab12ce,19705
+- vulkan-3.3@sha256:09b076b28555d15be638e5178bacecd3c7609d4931fa99628df9a57dd2f5563e,22662
+extra-lib-dirs:
+- /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/lib
