@@ -55,7 +55,8 @@ main = do
             Vk.FORMAT_B8G8R8_UNORM
             Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
         )
-    logicalDevice <- createLogicalDevice vkInstance physicalDeviceInfo
+    logicalDevice <- createLogicalDevice physicalDeviceInfo
+    swapchain <- withSwapchain surface physicalDeviceInfo logicalDevice
     liftIO $ mainLoop (pure ())
 
 mainLoop :: IO () -> IO ()
@@ -133,13 +134,20 @@ data LogicalDeviceInfo
       }
 
 createLogicalDevice ::
-  Vk.Instance ->
   DeviceInfo ->
   Managed LogicalDeviceInfo
-createLogicalDevice vkInstance devInfo = do
+createLogicalDevice devInfo = do
   device <- withDevice devInfo
-  graphicsQueue <- Vk.getDeviceQueue device (deviceInfoGraphicsQueue devInfo) 0
-  presentQueue <- Vk.getDeviceQueue device (deviceInfoPresentQueue devInfo) 0
+  graphicsQueue <-
+    Vk.getDeviceQueue
+      device
+      (deviceInfoGraphicsQueueIndex devInfo)
+      0
+  presentQueue <-
+    Vk.getDeviceQueue
+      device
+      (deviceInfoPresentQueueIndex devInfo)
+      0
   pure $ LogicalDeviceInfo device graphicsQueue presentQueue
 
 withDevice :: DeviceInfo -> Managed Vk.Device
@@ -156,18 +164,19 @@ withDevice devInfo = do
                       }
                   | i <-
                       nub
-                        [ deviceInfoGraphicsQueue devInfo,
-                          deviceInfoPresentQueue devInfo
+                        [ deviceInfoGraphicsQueueIndex devInfo,
+                          deviceInfoPresentQueueIndex devInfo
                         ]
                 ],
             Vk.enabledExtensionNames =
               V.fromList [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
           }
   let acquire :: IO Vk.Device
-      acquire = Vk.createDevice
-                (deviceInfoPhysicalDevice devInfo)
-                deviceCreateInfo
-                Nothing
+      acquire =
+        Vk.createDevice
+          (deviceInfoPhysicalDevice devInfo)
+          deviceCreateInfo
+          Nothing
       --
       release :: Vk.Device -> IO ()
       release device = Vk.destroyDevice device Nothing
@@ -176,8 +185,8 @@ withDevice devInfo = do
 data DeviceInfo
   = DeviceInfo
       { deviceInfoPhysicalDevice :: Vk.PhysicalDevice,
-        deviceInfoGraphicsQueue :: Word32,
-        deviceInfoPresentQueue :: Word32,
+        deviceInfoGraphicsQueueIndex :: Word32,
+        deviceInfoPresentQueueIndex :: Word32,
         deviceInfoFormat :: Vk.SurfaceFormatKHR,
         deviceInfoPresentMode :: Vk.PresentModeKHR,
         deviceInfoSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
@@ -338,6 +347,81 @@ getPresentMode device surface = do
   pure
     $ V.headM
     $ V.filter (`V.elem` presentModes) desiredPresentModes
+
+withSwapchain ::
+  Vk.SurfaceKHR ->
+  DeviceInfo ->
+  LogicalDeviceInfo ->
+  Managed Vk.SwapchainKHR
+withSwapchain surface di ldi = do
+  --
+  let (sharingMode, queueFamilyIndices) =
+        if ldiGraphicsQueue ldi == ldiPresentQueue ldi
+          then (Vk.SHARING_MODE_EXCLUSIVE, V.empty)
+          else
+            ( Vk.SHARING_MODE_CONCURRENT,
+              V.fromList
+                [ deviceInfoGraphicsQueueIndex di,
+                  deviceInfoPresentQueueIndex di
+                ]
+            )
+  --
+  let maxImageCount =
+        Vk.maxImageCount
+          (deviceInfoSurfaceCapabilities di :: Vk.SurfaceCapabilitiesKHR)
+  let minImageCount =
+        min
+          ( Vk.minImageCount
+              (deviceInfoSurfaceCapabilities di :: Vk.SurfaceCapabilitiesKHR)
+              + 1
+          )
+          maxImageCount
+  --
+  let imageExtent =
+        case Vk.currentExtent
+          (deviceInfoSurfaceCapabilities di :: Vk.SurfaceCapabilitiesKHR) of
+          Vk.Extent2D w h
+            | w == maxBound,
+              h == maxBound ->
+              Vk.Extent2D
+                (fromIntegral windowWidth)
+                (fromIntegral windowHeight)
+          e -> e
+  --
+  let createInfo :: Vk.SwapchainCreateInfoKHR '[]
+      createInfo =
+        Vk.zero
+          { Vk.surface = surface,
+            Vk.minImageCount = minImageCount,
+            Vk.imageFormat =
+              (Vk.format :: Vk.SurfaceFormatKHR -> Vk.Format)
+                (deviceInfoFormat di),
+            Vk.imageColorSpace = Vk.colorSpace (deviceInfoFormat di),
+            Vk.imageExtent = imageExtent,
+            Vk.imageArrayLayers = 1,
+            Vk.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            Vk.imageSharingMode = sharingMode,
+            Vk.queueFamilyIndices = queueFamilyIndices,
+            Vk.preTransform =
+              Vk.currentTransform
+                (deviceInfoSurfaceCapabilities di :: Vk.SurfaceCapabilitiesKHR),
+            Vk.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            Vk.presentMode = deviceInfoPresentMode di,
+            Vk.clipped = True
+          }
+  --
+  let acquire :: IO Vk.SwapchainKHR
+      acquire =
+        Vk.createSwapchainKHR
+          (ldiDevice ldi)
+          createInfo
+          Nothing
+      --
+      release :: Vk.SwapchainKHR -> IO ()
+      release swapchain =
+        Vk.destroySwapchainKHR (ldiDevice ldi) swapchain Nothing
+  --
+  managed (bracket acquire release)
 
 ---- Debugging Messages -------------------------------------------------------
 
