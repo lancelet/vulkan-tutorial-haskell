@@ -43,20 +43,7 @@ main = do
   putStrLn "Hello World"
   runManaged $ do
     withSDL
-    window <- withWindow "Vulkan" windowWidth windowHeight
-    vkInstance <- withInstance window "Hello Triangle"
-    withDebugUtils vkInstance
-    surface <- withSDLWindowSurface vkInstance window
-    physicalDeviceInfo <-
-      pickPhysicalDevice
-        vkInstance
-        surface
-        ( Vk.SurfaceFormatKHR
-            Vk.FORMAT_B8G8R8_UNORM
-            Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
-        )
-    logicalDevice <- createLogicalDevice physicalDeviceInfo
-    swapchain <- withSwapchain surface physicalDeviceInfo logicalDevice
+    vulkanWindow <- withVulkanWindow "Hello Triangle" 800 600
     liftIO $ mainLoop (pure ())
 
 mainLoop :: IO () -> IO ()
@@ -67,6 +54,50 @@ mainLoop draw = whileM $ do
     else draw >> pure True
 
 ---- Instance and Devices -----------------------------------------------------
+
+data VulkanWindow
+  = VulkanWindow
+      { vwSdlWindow :: SDL.Window,
+        vwDevice :: Vk.Device,
+        vwSurface :: Vk.SurfaceKHR,
+        vwSwapchain :: Vk.SwapchainKHR,
+        vwExtent :: Vk.Extent2D,
+        vwFormat :: Vk.Format,
+        vwImageViews :: V.Vector Vk.ImageView,
+        vwGraphicsQueue :: Vk.Queue,
+        vwGraphicsQueueFamilyIndex :: Word32,
+        vwPresentQueue :: Vk.Queue
+      }
+
+withVulkanWindow :: Text -> Int -> Int -> Managed VulkanWindow
+withVulkanWindow title width height = do
+  let desiredSurfFormat :: Vk.SurfaceFormatKHR
+      desiredSurfFormat =
+        Vk.SurfaceFormatKHR
+          Vk.FORMAT_B8G8R8_UNORM
+          Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
+  --
+  sdlWindow <- withSDLWindow title width height
+  vkInstance <- withInstance sdlWindow "Hello Triangle"
+  withDebugUtils vkInstance
+  surface <- withSDLWindowSurface vkInstance sdlWindow
+  physicalDeviceInfo <- pickPhysicalDevice vkInstance surface desiredSurfFormat
+  logicalDeviceInfo <- createLogicalDevice physicalDeviceInfo
+  swapchainInfo <- withSwapchain surface physicalDeviceInfo logicalDeviceInfo
+  imageViews <- withImageViews (ldiDevice logicalDeviceInfo) swapchainInfo
+  --
+  pure $
+    VulkanWindow
+      sdlWindow
+      (ldiDevice logicalDeviceInfo)
+      surface
+      (sciSwapchain swapchainInfo)
+      (sciExtent swapchainInfo)
+      (sciFormat swapchainInfo)
+      imageViews
+      (ldiGraphicsQueue logicalDeviceInfo)
+      (deviceInfoGraphicsQueueIndex physicalDeviceInfo)
+      (ldiPresentQueue logicalDeviceInfo)
 
 withInstance ::
   SDL.Window ->
@@ -348,11 +379,18 @@ getPresentMode device surface = do
     $ V.headM
     $ V.filter (`V.elem` presentModes) desiredPresentModes
 
+data SwapchainInfo
+  = SwapchainInfo
+      { sciSwapchain :: Vk.SwapchainKHR,
+        sciFormat :: Vk.Format,
+        sciExtent :: Vk.Extent2D
+      }
+
 withSwapchain ::
   Vk.SurfaceKHR ->
   DeviceInfo ->
   LogicalDeviceInfo ->
-  Managed Vk.SwapchainKHR
+  Managed SwapchainInfo
 withSwapchain surface di ldi = do
   --
   let (sharingMode, queueFamilyIndices) =
@@ -388,14 +426,16 @@ withSwapchain surface di ldi = do
                 (fromIntegral windowHeight)
           e -> e
   --
+  let imageFormat =
+        (Vk.format :: Vk.SurfaceFormatKHR -> Vk.Format)
+          (deviceInfoFormat di)
+  --
   let createInfo :: Vk.SwapchainCreateInfoKHR '[]
       createInfo =
         Vk.zero
           { Vk.surface = surface,
             Vk.minImageCount = minImageCount,
-            Vk.imageFormat =
-              (Vk.format :: Vk.SurfaceFormatKHR -> Vk.Format)
-                (deviceInfoFormat di),
+            Vk.imageFormat = imageFormat,
             Vk.imageColorSpace = Vk.colorSpace (deviceInfoFormat di),
             Vk.imageExtent = imageExtent,
             Vk.imageArrayLayers = 1,
@@ -410,16 +450,63 @@ withSwapchain surface di ldi = do
             Vk.clipped = True
           }
   --
-  let acquire :: IO Vk.SwapchainKHR
+  let acquire :: IO SwapchainInfo
       acquire =
-        Vk.createSwapchainKHR
-          (ldiDevice ldi)
-          createInfo
-          Nothing
+        SwapchainInfo
+          <$> Vk.createSwapchainKHR
+            (ldiDevice ldi)
+            createInfo
+            Nothing
+          <*> pure imageFormat
+          <*> pure imageExtent
       --
-      release :: Vk.SwapchainKHR -> IO ()
-      release swapchain =
-        Vk.destroySwapchainKHR (ldiDevice ldi) swapchain Nothing
+      release :: SwapchainInfo -> IO ()
+      release swapchainInfo =
+        Vk.destroySwapchainKHR
+          (ldiDevice ldi)
+          (sciSwapchain swapchainInfo)
+          Nothing
+  --
+  managed (bracket acquire release)
+
+withImageViews :: Vk.Device -> SwapchainInfo -> Managed (V.Vector Vk.ImageView)
+withImageViews device sci = do
+  let format = sciFormat sci
+  (_, images) <- liftIO $ Vk.getSwapchainImagesKHR device (sciSwapchain sci)
+  let
+    withIV :: Vk.Image -> Managed Vk.ImageView
+    withIV = withImageView device format
+  traverse withIV images
+
+withImageView :: Vk.Device -> Vk.Format -> Vk.Image -> Managed Vk.ImageView
+withImageView device format image = do
+  let
+    createInfo :: Vk.ImageViewCreateInfo '[]
+    createInfo = Vk.zero
+      { Vk.image = image,
+        Vk.viewType = Vk.IMAGE_VIEW_TYPE_2D,
+        Vk.format = format,
+        Vk.components = Vk.zero
+                        { Vk.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                          Vk.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                          Vk.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                          Vk.a = Vk.COMPONENT_SWIZZLE_IDENTITY
+                        },
+        Vk.subresourceRange =
+          Vk.zero
+          { Vk.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+            Vk.baseMipLevel = 0,
+            Vk.levelCount = 1,
+            Vk.baseArrayLayer = 0,
+            Vk.layerCount = 1
+          }
+      }
+    --
+    acquire :: IO Vk.ImageView
+    acquire = Vk.createImageView device createInfo Nothing
+    --
+    release :: Vk.ImageView -> IO ()
+    release v = Vk.destroyImageView device v Nothing
   --
   managed (bracket acquire release)
 
@@ -468,8 +555,8 @@ withSDL =
       sdlVkBracket = bracket_ (SDL.vkLoadLibrary Nothing) SDL.vkUnloadLibrary
    in managed_ (sdlBracket . sdlVkBracket)
 
-withWindow :: Text -> Int -> Int -> Managed SDL.Window
-withWindow title width height =
+withSDLWindow :: Text -> Int -> Int -> Managed SDL.Window
+withSDLWindow title width height =
   let acquire :: IO SDL.Window
       acquire =
         SDL.createWindow
