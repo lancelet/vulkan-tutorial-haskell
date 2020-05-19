@@ -5,7 +5,6 @@
 # I have the macOS Vulkan SDK extracted at ~/vulkansdk-${VULKAN_SDK_VERSION}.
 # I'm also using Nix (although not very well!).
 
-
 export VULKAN_SDK_VERSION='macos-1.2.135.0'
 export VULKAN_SDK="$HOME/vulkansdk-$VULKAN_SDK_VERSION/macOS"
 export PATH="$VULKAN_SDK/bin:$PATH"

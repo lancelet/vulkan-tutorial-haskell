@@ -4,17 +4,25 @@ This is just me following the
 [Vulkan Tutorial](https://vulkan-tutorial.com), and trying to translate it into
 Haskell. So it's not very interesting.
 
-## Miscellaneous Hints
+## macOS Getting Started
 
-For `ghcid`, to allow `libvulkan.dylib` to be found:
+Download the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) for macOS and
+extract it to a local location (eg. `$HOME`). Check the following files to
+update the locations to where you extracted the SDK:
+  - `shell.sh` - the `VULKAN_SDK_VERSION` and `VULKAN_SDK` environment 
+    variables.
+  - `stack.yaml` - the `extra-include-dirs` and `extra-lib-dirs` settings.
+  
+Enter a shell with the correct Nix dependencies and environment variables
+configured for Vulkan development:
 
+```bash
+./shell.sh
 ```
-install_name_tool -add_rpath "$VULKAN_SDK/lib" <path/to/libHSvulkan.dylib>
-```
 
-To fix permissions errors for `libvulkan.dylib`:
+Build and run the stack project:
 
-```
-cd $VULKAN_SDK/lib
-xattr -d com.apple.quarantine libvulkan.dylib
+```bash
+stack build
+stack run
 ```
