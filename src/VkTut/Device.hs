@@ -18,6 +18,7 @@ import Data.Vector (Vector)
 import Data.Word (Word32, Word64)
 import qualified Vulkan as Vk
 
+-- | Information about a physical device.
 data PhysicalDeviceInfo
   = PhysicalDeviceInfo
       { pdiPhysicalDevice :: Vk.PhysicalDevice,
