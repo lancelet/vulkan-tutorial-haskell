@@ -13,13 +13,23 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Managed (runManaged)
 import qualified SDL
 import qualified VkTut.SDLWin as SDLWin
+import qualified Vulkan as Vk
 
 main :: IO ()
 main = do
   putStrLn "Launching Vulkan Application"
   runManaged $ do
     SDLWin.sdl
-    _window <- SDLWin.sdlWindow "Vulkan" 800 600
+    window <- SDLWin.window "Vulkan" 800 600
+    _instance <-
+      SDLWin.vulkanInstance
+        window
+        "Vulkan Model Viewer"
+        "Haskell Engine"
+        []
+        []
+        True
+        Vk.API_VERSION_1_0
     mainLoop $ pure ()
 
 -- | Application main loop.
