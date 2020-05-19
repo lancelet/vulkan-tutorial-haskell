@@ -59,11 +59,10 @@ window ::
   -- | Managed instance of the SDL window.
   Managed SDL.Window
 window title width height =
-  managed
-    ( bracket
-        (acquireWindow title width height)
-        SDL.destroyWindow
-    )
+  managed $
+    bracket
+      (acquireWindow title width height)
+      SDL.destroyWindow
 
 -- | Create an SDL window.
 acquireWindow ::
@@ -113,19 +112,18 @@ vulkanInstance
   extraExtensions
   useDebugLayers
   apiVersion =
-    managed
-      ( bracket
-          ( acquireVulkanInstance
-              win
-              appName
-              engineName
-              extraLayers
-              extraExtensions
-              useDebugLayers
-              apiVersion
-          )
-          releaseVulkanInstance
-      )
+    managed $
+      bracket
+        ( acquireVulkanInstance
+            win
+            appName
+            engineName
+            extraLayers
+            extraExtensions
+            useDebugLayers
+            apiVersion
+        )
+        releaseVulkanInstance
 
 -- | Acquire a Vulkan Instance.
 acquireVulkanInstance ::
@@ -229,13 +227,13 @@ debugUtilsMessengerCreateInfo =
 
 -- | Managed instance of the debugging utilities.
 debugUtils :: Vk.Instance -> Managed ()
-debugUtils vkInstance =
-  managed
-    ( bracket
+debugUtils vkInstance = do
+  _messenger <-
+    managed $
+      bracket
         (acquireDebugUtils vkInstance)
         (releaseDebugUtils vkInstance)
-    )
-    >> pure ()
+  pure ()
 
 -- | Acquire debug utilities.
 acquireDebugUtils :: Vk.Instance -> IO Vk.DebugUtilsMessengerEXT
