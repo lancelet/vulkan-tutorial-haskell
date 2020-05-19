@@ -9,9 +9,11 @@ where
 
 import Control.Monad (unless)
 import Control.Monad.Extra (whileM)
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Managed (runManaged)
+import qualified Data.Text.IO as Text
 import qualified SDL
+import qualified VkTut.Device as Device
 import qualified VkTut.SDLWin as SDLWin
 import qualified Vulkan as Vk
 
@@ -31,7 +33,26 @@ main = do
         True
         Vk.API_VERSION_1_0
     SDLWin.debugUtils vkInstance
-    _surface <- SDLWin.windowSurface vkInstance window
+    surface <- SDLWin.windowSurface vkInstance window
+    let desiredSurfaceFormat :: Vk.SurfaceFormatKHR
+        desiredSurfaceFormat =
+          Vk.SurfaceFormatKHR
+            Vk.FORMAT_B8G8R8A8_SRGB
+            Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
+        --
+        desiredPresentModes :: [Vk.PresentModeKHR]
+        desiredPresentModes =
+          [ Vk.PRESENT_MODE_MAILBOX_KHR,
+            Vk.PRESENT_MODE_FIFO_KHR,
+            Vk.PRESENT_MODE_IMMEDIATE_KHR
+          ]
+    pdi <-
+      Device.pickPhysicalDevice
+        vkInstance
+        surface
+        desiredSurfaceFormat
+        desiredPresentModes
+    liftIO $ Text.putStrLn $ "Picked physical device: " <> Device.pdiName pdi
     mainLoop $ pure ()
 
 -- | Application main loop.
