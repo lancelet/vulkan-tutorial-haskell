@@ -7,6 +7,7 @@
 module VkTut.SDLWin
   ( sdl,
     window,
+    windowSurface,
     vulkanInstance,
     debugUtils,
   )
@@ -23,6 +24,7 @@ import qualified Data.Text.Encoding as Text
 import qualified Data.Vector as V
 import Data.Vector (Vector)
 import Data.Word (Word32)
+import Foreign (castPtr)
 import Foreign.C (CInt, CString)
 import qualified SDL
 import qualified SDL.Video.Vulkan as SDL
@@ -250,3 +252,24 @@ releaseDebugUtils vkInstance dbgUtils =
     vkInstance
     dbgUtils
     Nothing
+
+-- | Managed surface from an SDL window.
+windowSurface :: Vk.Instance -> SDL.Window -> Managed Vk.SurfaceKHR
+windowSurface vkInstance win =
+  managed $
+    bracket
+      (acquireWindowSurface vkInstance win)
+      (releaseSurface vkInstance)
+
+-- | Acquire the surface of a window.
+acquireWindowSurface :: Vk.Instance -> SDL.Window -> IO Vk.SurfaceKHR
+acquireWindowSurface vkInstance win = do
+  let sdlHandle :: SDL.VkInstance
+      sdlHandle = castPtr (Vk.instanceHandle vkInstance)
+  surface <- SDL.vkCreateSurface win sdlHandle
+  pure (Vk.SurfaceKHR surface)
+
+-- | Release a surface.
+releaseSurface :: Vk.Instance -> Vk.SurfaceKHR -> IO ()
+releaseSurface vkInstance surface =
+  Vk.destroySurfaceKHR vkInstance surface Nothing

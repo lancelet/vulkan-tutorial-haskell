@@ -44,6 +44,7 @@ library
     , vulkan-utils
 
   exposed-modules:
+    VkTut.Device
     VkTut.Main
     VkTut.SDLWin
 

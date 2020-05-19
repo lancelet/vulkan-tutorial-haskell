@@ -31,6 +31,7 @@ main = do
         True
         Vk.API_VERSION_1_0
     SDLWin.debugUtils vkInstance
+    _surface <- SDLWin.windowSurface vkInstance window
     mainLoop $ pure ()
 
 -- | Application main loop.
