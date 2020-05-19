@@ -1,14 +1,20 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module VkTut.Device
-  ( pickPhysicalDevice,
-    PhysicalDeviceInfo (..),
+  ( PhysicalDeviceInfo (..),
+    pickPhysicalDevice,
+    device,
   )
 where
 
+import Control.Exception.Safe (bracket)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Managed (Managed, managed)
 import Data.Bits ((.&.), Bits, zeroBits)
+import Data.ByteString (ByteString)
+import Data.List (nub)
 import Data.Maybe (isJust)
 import Data.Ord (comparing)
 import Data.Text (Text)
@@ -17,6 +23,7 @@ import qualified Data.Vector as V
 import Data.Vector (Vector)
 import Data.Word (Word32, Word64)
 import qualified Vulkan as Vk
+import Vulkan.CStruct.Extends (SomeStruct (SomeStruct))
 
 -- | Information about a physical device.
 data PhysicalDeviceInfo
@@ -30,6 +37,44 @@ data PhysicalDeviceInfo
         pdiSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
         pdiMemory :: Word64
       }
+
+-- | Managed Vulkan device.
+device :: PhysicalDeviceInfo -> Managed Vk.Device
+device pdi =
+  managed $
+    bracket
+      (acquireDevice pdi)
+      releaseDevice
+
+-- | Acquire a Vulkan device.
+acquireDevice :: PhysicalDeviceInfo -> IO Vk.Device
+acquireDevice pdi = do
+  let queueCreateInfos :: Vector (SomeStruct Vk.DeviceQueueCreateInfo)
+      queueCreateInfos =
+        V.fromList
+          [ SomeStruct $
+              Vk.zero
+                { Vk.queueFamilyIndex = i,
+                  Vk.queuePriorities = V.singleton 1.0
+                }
+            | i <- nub [pdiGraphicsQueueIndex pdi, pdiPresentQueueIndex pdi]
+          ]
+      --
+      enabledExtensionNames :: Vector ByteString
+      enabledExtensionNames = V.fromList [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
+      --
+      createInfo :: Vk.DeviceCreateInfo '[]
+      createInfo =
+        Vk.zero
+          { Vk.queueCreateInfos = queueCreateInfos,
+            Vk.enabledExtensionNames = enabledExtensionNames
+          }
+  --
+  Vk.createDevice (pdiPhysicalDevice pdi) createInfo Nothing
+
+-- | Release a Vulkan device.
+releaseDevice :: Vk.Device -> IO ()
+releaseDevice = flip Vk.destroyDevice Nothing
 
 -- | Pick a physical device to use.
 --
