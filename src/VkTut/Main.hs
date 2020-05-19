@@ -21,7 +21,7 @@ main = do
   runManaged $ do
     SDLWin.sdl
     window <- SDLWin.window "Vulkan" 800 600
-    _instance <-
+    vkInstance <-
       SDLWin.vulkanInstance
         window
         "Vulkan Model Viewer"
@@ -30,6 +30,7 @@ main = do
         []
         True
         Vk.API_VERSION_1_0
+    SDLWin.debugUtils vkInstance
     mainLoop $ pure ()
 
 -- | Application main loop.

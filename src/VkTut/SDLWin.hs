@@ -8,6 +8,7 @@ module VkTut.SDLWin
   ( sdl,
     window,
     vulkanInstance,
+    debugUtils,
   )
 where
 
@@ -212,7 +213,6 @@ debugUtilsMessengerCreateInfo =
   let messageSeverity :: Vk.DebugUtilsMessageSeverityFlagBitsEXT
       messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-          -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
       --
@@ -226,3 +226,29 @@ debugUtilsMessengerCreateInfo =
           Vk.messageType = messageType,
           Vk.pfnUserCallback = VkDebug.debugCallbackPtr
         }
+
+-- | Managed instance of the debugging utilities.
+debugUtils :: Vk.Instance -> Managed ()
+debugUtils vkInstance =
+  managed
+    ( bracket
+        (acquireDebugUtils vkInstance)
+        (releaseDebugUtils vkInstance)
+    )
+    >> pure ()
+
+-- | Acquire debug utilities.
+acquireDebugUtils :: Vk.Instance -> IO Vk.DebugUtilsMessengerEXT
+acquireDebugUtils vkInstance =
+  Vk.createDebugUtilsMessengerEXT
+    vkInstance
+    debugUtilsMessengerCreateInfo
+    Nothing
+
+-- | Release debug utilities.
+releaseDebugUtils :: Vk.Instance -> Vk.DebugUtilsMessengerEXT -> IO ()
+releaseDebugUtils vkInstance dbgUtils =
+  Vk.destroyDebugUtilsMessengerEXT
+    vkInstance
+    dbgUtils
+    Nothing
