@@ -3,5 +3,11 @@ packages:
 - .
 extra-deps:
 - vulkan-3.3@sha256:09b076b28555d15be638e5178bacecd3c7609d4931fa99628df9a57dd2f5563e,22662
+- git: https://github.com/expipiplus1/vulkan.git
+  commit: 7621808432d904f7ffe7d5397fb352d93133d333
+  subdirs:
+    - utils
+extra-include-dirs:
+- /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/include
 extra-lib-dirs:
 - /Users/jsm/vulkansdk-macos-1.2.135.0/macOS/lib
