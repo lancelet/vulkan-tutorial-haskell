@@ -4,6 +4,9 @@
 
 module VkTut.Device
   ( PhysicalDeviceInfo (..),
+    GraphicsQueueIndex (..),
+    PresentQueueIndex (..),
+    TotalDeviceMemory (..),
     pickPhysicalDevice,
     device,
     swapchain,
@@ -28,17 +31,27 @@ import qualified SDL.Video.Vulkan as SDL
 import qualified Vulkan as Vk
 import Vulkan.CStruct.Extends (SomeStruct (SomeStruct))
 
+newtype GraphicsQueueIndex
+  = GraphicsQueueIndex {unGraphicsQueueIndex :: Word32}
+
+newtype PresentQueueIndex
+  = PresentQueueIndex {unPresentQueueIndex :: Word32}
+
+newtype TotalDeviceMemory
+  = TotalDeviceMemory {unTotalDeviceMemory :: Word64}
+  deriving (Eq, Ord)
+
 -- | Information about a physical device.
 data PhysicalDeviceInfo
   = PhysicalDeviceInfo
       { pdiPhysicalDevice :: Vk.PhysicalDevice,
         pdiName :: Text,
-        pdiGraphicsQueueIndex :: Word32,
-        pdiPresentQueueIndex :: Word32,
+        pdiGraphicsQueueIndex :: GraphicsQueueIndex,
+        pdiPresentQueueIndex :: PresentQueueIndex,
         pdiSurfaceFormat :: Vk.SurfaceFormatKHR,
         pdiPresentMode :: Vk.PresentModeKHR,
         pdiSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
-        pdiMemory :: Word64
+        pdiMemory :: TotalDeviceMemory
       }
 
 -- | Managed swapchain.
@@ -50,40 +63,24 @@ swapchain ::
   SDL.Window ->
   -- | The surface.
   Vk.SurfaceKHR ->
-  -- | Physical device for the swapchain.
-  Vk.PhysicalDevice ->
+  -- | Physical device information.
+  PhysicalDeviceInfo ->
   -- | Logical device.
   Vk.Device ->
-  -- | Surface format in use.
-  Vk.SurfaceFormatKHR ->
-  -- | Present mode to use.
-  Vk.PresentModeKHR ->
-  -- | Graphics queue index.
-  Word32 ->
-  -- | Present queue index.
-  Word32 ->
   -- | Managed swapchain.
   Managed Vk.SwapchainKHR
 swapchain
   window
   surface
-  physDev
-  logicalDevice
-  surfaceFormat
-  presentMode
-  graphicsQueueIndex
-  presentQueueIndex =
+  pdi
+  logicalDevice =
     managed $
       bracket
         ( acquireSwapchain
             window
             surface
-            physDev
+            pdi
             logicalDevice
-            surfaceFormat
-            presentMode
-            graphicsQueueIndex
-            presentQueueIndex
         )
         (releaseSwapchain logicalDevice)
 
@@ -92,43 +89,32 @@ acquireSwapchain ::
   SDL.Window ->
   -- | The surface.
   Vk.SurfaceKHR ->
-  -- | Physical device for the swapchain.
-  Vk.PhysicalDevice ->
+  -- | Physical device information.
+  PhysicalDeviceInfo ->
   -- | Logical device.
   Vk.Device ->
-  -- | Surface format in use.
-  Vk.SurfaceFormatKHR ->
-  -- | Present mode to use.
-  Vk.PresentModeKHR ->
-  -- | Graphics queue index.
-  Word32 ->
-  -- | Present queue index.
-  Word32 ->
   -- | Action to create the swapchain.
   IO Vk.SwapchainKHR
 acquireSwapchain
   window
   surface
-  physDev
-  logicalDevice
-  surfaceFormat
-  presentMode
-  graphicsQueueIndex
-  presentQueueIndex = do
+  pdi
+  logicalDevice = do
     -- figure out the sharing mode for swapchain images; whether they have to
     -- be shared across queue families
-    let sharingMode :: Vk.SharingMode
+    let gqi, pqi :: Word32
+        gqi = unGraphicsQueueIndex . pdiGraphicsQueueIndex $ pdi
+        pqi = unPresentQueueIndex . pdiPresentQueueIndex $ pdi
+        --
+        sharingMode :: Vk.SharingMode
         queueFamilyIndices :: Vector Word32
         (sharingMode, queueFamilyIndices) =
-          if graphicsQueueIndex == presentQueueIndex
+          if gqi == pqi
             then (Vk.SHARING_MODE_EXCLUSIVE, V.empty)
-            else
-              ( Vk.SHARING_MODE_CONCURRENT,
-                V.fromList [graphicsQueueIndex, presentQueueIndex]
-              )
+            else (Vk.SHARING_MODE_CONCURRENT, V.fromList [gqi, pqi])
     -- establish the image count for the swapchain
-    surfCaps :: Vk.SurfaceCapabilitiesKHR <-
-      Vk.getPhysicalDeviceSurfaceCapabilitiesKHR physDev surface
+    let surfCaps :: Vk.SurfaceCapabilitiesKHR
+        surfCaps = pdiSurfaceCapabilities pdi
     let maxImageCount, minImageCount, imageCount :: Word32
         maxImageCount = Vk.maxImageCount (surfCaps :: Vk.SurfaceCapabilitiesKHR)
         minImageCount = Vk.minImageCount (surfCaps :: Vk.SurfaceCapabilitiesKHR)
@@ -145,10 +131,10 @@ acquireSwapchain
           e -> e
     -- find the image format and color space
     let format :: Vk.Format
-        format = Vk.format (surfaceFormat :: Vk.SurfaceFormatKHR)
+        format = Vk.format (pdiSurfaceFormat pdi :: Vk.SurfaceFormatKHR)
         --
         colorSpace :: Vk.ColorSpaceKHR
-        colorSpace = Vk.colorSpace surfaceFormat
+        colorSpace = Vk.colorSpace (pdiSurfaceFormat pdi)
     -- current transformation
     let curXForm :: Vk.SurfaceTransformFlagBitsKHR
         curXForm = Vk.currentTransform (surfCaps :: Vk.SurfaceCapabilitiesKHR)
@@ -167,7 +153,7 @@ acquireSwapchain
               Vk.queueFamilyIndices = queueFamilyIndices,
               Vk.preTransform = curXForm,
               Vk.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-              Vk.presentMode = presentMode,
+              Vk.presentMode = pdiPresentMode pdi,
               Vk.clipped = True
             }
     --
@@ -196,7 +182,11 @@ acquireDevice pdi = do
                 { Vk.queueFamilyIndex = i,
                   Vk.queuePriorities = V.singleton 1.0
                 }
-            | i <- nub [pdiGraphicsQueueIndex pdi, pdiPresentQueueIndex pdi]
+            | i <-
+                nub
+                  [ unGraphicsQueueIndex . pdiGraphicsQueueIndex $ pdi,
+                    unPresentQueueIndex . pdiPresentQueueIndex $ pdi
+                  ]
           ]
       --
       enabledExtensionNames :: Vector ByteString
@@ -276,11 +266,11 @@ physicalDeviceInfo surface desiredFormat desiredPresentModes physDev = do
           && (not . V.null) presentQueueIndices
           && isJust mPresentMode
   -- device parameters
-  let graphicsQueueIndex :: Word32
-      graphicsQueueIndex = V.head graphicsQueueIndices
+  let graphicsQueueIndex :: GraphicsQueueIndex
+      graphicsQueueIndex = GraphicsQueueIndex (V.head graphicsQueueIndices)
       --
-      presentQueueIndex :: Word32
-      presentQueueIndex = V.head presentQueueIndices
+      presentQueueIndex :: PresentQueueIndex
+      presentQueueIndex = PresentQueueIndex (V.head presentQueueIndices)
       --
       presentMode :: Vk.PresentModeKHR
       presentMode = case mPresentMode of
@@ -393,7 +383,10 @@ physicalDevicePresentMode physDev surface desiredModes = do
     $ V.filter (`V.elem` modes) desiredPModes
 
 -- | Find the total memory of a physical device.
-physicalDeviceTotalMemory :: MonadIO m => Vk.PhysicalDevice -> m Word64
+physicalDeviceTotalMemory ::
+  MonadIO m =>
+  Vk.PhysicalDevice ->
+  m TotalDeviceMemory
 physicalDeviceTotalMemory physDev = do
   memProps <- Vk.getPhysicalDeviceMemoryProperties physDev
   let heaps :: Vector Vk.MemoryHeap
@@ -401,7 +394,10 @@ physicalDeviceTotalMemory physDev = do
       --
       heapSize :: Vk.MemoryHeap -> Vk.DeviceSize
       heapSize = Vk.size
-  pure $ sum (heapSize <$> heaps)
+      --
+      total :: TotalDeviceMemory
+      total = TotalDeviceMemory $ sum (heapSize <$> heaps)
+  pure total
 
 -- | Check if a Vulkan physical device has a swapchain.
 physicalDeviceHasSwapchain :: MonadIO m => Vk.PhysicalDevice -> m Bool

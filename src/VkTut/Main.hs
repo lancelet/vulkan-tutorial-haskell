@@ -53,7 +53,13 @@ main = do
         desiredSurfaceFormat
         desiredPresentModes
     liftIO $ Text.putStrLn $ "Picked physical device: " <> Device.pdiName pdi
-    _device <- Device.device pdi
+    logicalDevice <- Device.device pdi
+    _swapchain <-
+      Device.swapchain
+        window
+        surface
+        pdi
+        logicalDevice
     mainLoop $ pure ()
 
 -- | Application main loop.
