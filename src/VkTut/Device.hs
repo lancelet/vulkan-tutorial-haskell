@@ -10,6 +10,7 @@ module VkTut.Device
     pickPhysicalDevice,
     device,
     swapchain,
+    imageView,
   )
 where
 
@@ -53,6 +54,58 @@ data PhysicalDeviceInfo
         pdiSurfaceCapabilities :: Vk.SurfaceCapabilitiesKHR,
         pdiMemory :: TotalDeviceMemory
       }
+
+imageView ::
+  Vk.Device ->
+  Vk.Format ->
+  Vk.Image ->
+  Managed Vk.ImageView
+imageView logicalDevice format image =
+  managed $
+    bracket
+      (acquireImageView logicalDevice format image)
+      (releaseImageView logicalDevice)
+
+acquireImageView ::
+  Vk.Device ->
+  Vk.Format ->
+  Vk.Image ->
+  IO Vk.ImageView
+acquireImageView logicalDevice format image = do
+  let components :: Vk.ComponentMapping
+      components =
+        Vk.zero
+          { Vk.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            Vk.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            Vk.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            Vk.a = Vk.COMPONENT_SWIZZLE_IDENTITY
+          }
+      --
+      subresourceRange :: Vk.ImageSubresourceRange
+      subresourceRange =
+        Vk.zero
+          { Vk.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+            Vk.baseMipLevel = 0,
+            Vk.levelCount = 1,
+            Vk.baseArrayLayer = 0,
+            Vk.layerCount = 1
+          }
+      --
+      createInfo :: Vk.ImageViewCreateInfo '[]
+      createInfo =
+        Vk.zero
+          { Vk.image = image,
+            Vk.viewType = Vk.IMAGE_VIEW_TYPE_2D,
+            Vk.format = format,
+            Vk.components = components,
+            Vk.subresourceRange = subresourceRange
+          }
+  --
+  Vk.createImageView logicalDevice createInfo Nothing
+
+releaseImageView :: Vk.Device -> Vk.ImageView -> IO ()
+releaseImageView logicalDevice iv =
+  Vk.destroyImageView logicalDevice iv Nothing
 
 -- | Managed swapchain.
 --
