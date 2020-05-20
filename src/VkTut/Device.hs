@@ -6,6 +6,7 @@ module VkTut.Device
   ( PhysicalDeviceInfo (..),
     pickPhysicalDevice,
     device,
+    swapchain
   )
 where
 
@@ -22,6 +23,8 @@ import qualified Data.Text.Encoding as Text
 import qualified Data.Vector as V
 import Data.Vector (Vector)
 import Data.Word (Word32, Word64)
+import qualified SDL
+import qualified SDL.Video.Vulkan as SDL
 import qualified Vulkan as Vk
 import Vulkan.CStruct.Extends (SomeStruct (SomeStruct))
 
@@ -38,7 +41,143 @@ data PhysicalDeviceInfo
         pdiMemory :: Word64
       }
 
--- | Managed Vulkan device.
+-- | Managed swapchain.
+--
+-- TODO: If we have to re-create the swapchain on a window re-size, it may not
+--       be best to use a managed instance in that case.
+swapchain ::
+  -- | The window.
+  SDL.Window ->
+  -- | The surface.
+  Vk.SurfaceKHR ->
+  -- | Physical device for the swapchain.
+  Vk.PhysicalDevice ->
+  -- | Logical device.
+  Vk.Device ->
+  -- | Surface format in use.
+  Vk.SurfaceFormatKHR ->
+  -- | Present mode to use.
+  Vk.PresentModeKHR ->
+  -- | Graphics queue index.
+  Word32 ->
+  -- | Present queue index.
+  Word32 ->
+  -- | Managed swapchain.
+  Managed Vk.SwapchainKHR
+swapchain
+  window
+  surface
+  physDev
+  logicalDevice
+  surfaceFormat
+  presentMode
+  graphicsQueueIndex
+  presentQueueIndex =
+    managed $
+      bracket
+        ( acquireSwapchain
+            window
+            surface
+            physDev
+            logicalDevice
+            surfaceFormat
+            presentMode
+            graphicsQueueIndex
+            presentQueueIndex
+        )
+        (releaseSwapchain logicalDevice)
+
+acquireSwapchain ::
+  -- | The window.
+  SDL.Window ->
+  -- | The surface.
+  Vk.SurfaceKHR ->
+  -- | Physical device for the swapchain.
+  Vk.PhysicalDevice ->
+  -- | Logical device.
+  Vk.Device ->
+  -- | Surface format in use.
+  Vk.SurfaceFormatKHR ->
+  -- | Present mode to use.
+  Vk.PresentModeKHR ->
+  -- | Graphics queue index.
+  Word32 ->
+  -- | Present queue index.
+  Word32 ->
+  -- | Action to create the swapchain.
+  IO Vk.SwapchainKHR
+acquireSwapchain
+  window
+  surface
+  physDev
+  logicalDevice
+  surfaceFormat
+  presentMode
+  graphicsQueueIndex
+  presentQueueIndex = do
+    -- figure out the sharing mode for swapchain images; whether they have to
+    -- be shared across queue families
+    let sharingMode :: Vk.SharingMode
+        queueFamilyIndices :: Vector Word32
+        (sharingMode, queueFamilyIndices) =
+          if graphicsQueueIndex == presentQueueIndex
+            then (Vk.SHARING_MODE_EXCLUSIVE, V.empty)
+            else
+              ( Vk.SHARING_MODE_CONCURRENT,
+                V.fromList [graphicsQueueIndex, presentQueueIndex]
+              )
+    -- establish the image count for the swapchain
+    surfCaps :: Vk.SurfaceCapabilitiesKHR <-
+      Vk.getPhysicalDeviceSurfaceCapabilitiesKHR physDev surface
+    let maxImageCount, minImageCount, imageCount :: Word32
+        maxImageCount = Vk.maxImageCount (surfCaps :: Vk.SurfaceCapabilitiesKHR)
+        minImageCount = Vk.minImageCount (surfCaps :: Vk.SurfaceCapabilitiesKHR)
+        imageCount = min maxImageCount (minImageCount + 1)
+    -- establish the size ("extent") of the swapchain images
+    SDL.V2 winw winh <- SDL.vkGetDrawableSize window
+    let isMaxExtent :: Vk.Extent2D -> Bool
+        isMaxExtent (Vk.Extent2D w h) = w == maxBound && h == maxBound
+        --
+        extent, windowExtent :: Vk.Extent2D
+        windowExtent = Vk.Extent2D (fromIntegral winw) (fromIntegral winh)
+        extent = case Vk.currentExtent (surfCaps :: Vk.SurfaceCapabilitiesKHR) of
+          e | isMaxExtent e -> windowExtent
+          e -> e
+    -- find the image format and color space
+    let format :: Vk.Format
+        format = Vk.format (surfaceFormat :: Vk.SurfaceFormatKHR)
+        --
+        colorSpace :: Vk.ColorSpaceKHR
+        colorSpace = Vk.colorSpace surfaceFormat
+    -- current transformation
+    let curXForm :: Vk.SurfaceTransformFlagBitsKHR
+        curXForm = Vk.currentTransform (surfCaps :: Vk.SurfaceCapabilitiesKHR)
+    -- set up the creation information
+    let createInfo :: Vk.SwapchainCreateInfoKHR '[]
+        createInfo =
+          Vk.zero
+            { Vk.surface = surface,
+              Vk.minImageCount = imageCount,
+              Vk.imageFormat = format,
+              Vk.imageColorSpace = colorSpace,
+              Vk.imageExtent = extent,
+              Vk.imageArrayLayers = 1,
+              Vk.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+              Vk.imageSharingMode = sharingMode,
+              Vk.queueFamilyIndices = queueFamilyIndices,
+              Vk.preTransform = curXForm,
+              Vk.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+              Vk.presentMode = presentMode,
+              Vk.clipped = True
+            }
+    --
+    Vk.createSwapchainKHR logicalDevice createInfo Nothing
+
+releaseSwapchain :: Vk.Device -> Vk.SwapchainKHR -> IO ()
+releaseSwapchain logicalDevice sc =
+  Vk.destroySwapchainKHR logicalDevice sc Nothing
+
+-- | Managed Vulkan logical device.
 device :: PhysicalDeviceInfo -> Managed Vk.Device
 device pdi =
   managed $
@@ -147,7 +286,7 @@ physicalDeviceInfo surface desiredFormat desiredPresentModes physDev = do
       presentMode = case mPresentMode of
         Just x -> x
         Nothing ->
-          error $
+          error
             "Should already have determined that the present mode is not empty!"
   -- device name
   name :: Text <-
