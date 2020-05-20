@@ -6,7 +6,7 @@ module VkTut.Device
   ( PhysicalDeviceInfo (..),
     pickPhysicalDevice,
     device,
-    swapchain
+    swapchain,
   )
 where
 
